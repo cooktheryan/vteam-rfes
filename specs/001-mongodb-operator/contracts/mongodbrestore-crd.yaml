@@ -1,0 +1,105 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mongodbrestores.database.vteam.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: database.vteam.io
+  names:
+    kind: MongoDBRestore
+    listKind: MongoDBRestoreList
+    plural: mongodbrestores
+    singular: mongodbrestore
+    shortNames:
+      - mdbrst
+      - mongorst
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: MongoDBRestore is the Schema for the mongodbrestores API
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: MongoDBRestoreSpec defines the desired restore operation
+              required:
+                - targetInstanceRef
+                - backupRef
+              properties:
+                targetInstanceRef:
+                  type: object
+                  description: Reference to the MongoDBInstance to restore to
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of target MongoDBInstance
+                    namespace:
+                      type: string
+                      description: Namespace of instance (defaults to restore namespace)
+                backupRef:
+                  type: object
+                  description: Reference to the MongoDBBackup to restore from
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of MongoDBBackup
+                    namespace:
+                      type: string
+                      description: Namespace of backup (defaults to restore namespace)
+            status:
+              type: object
+              description: MongoDBRestoreStatus defines the observed restore state
+              properties:
+                phase:
+                  type: string
+                  description: Restore phase
+                  enum:
+                    - Pending
+                    - InProgress
+                    - Completed
+                    - Failed
+                startTime:
+                  type: string
+                  format: date-time
+                  description: Restore start time
+                completionTime:
+                  type: string
+                  format: date-time
+                  description: Restore completion time
+                message:
+                  type: string
+                  description: Human-readable status message
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Target
+          type: string
+          description: Target instance
+          jsonPath: .spec.targetInstanceRef.name
+        - name: Backup
+          type: string
+          description: Source backup
+          jsonPath: .spec.backupRef.name
+        - name: Phase
+          type: string
+          description: Restore phase
+          jsonPath: .status.phase
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

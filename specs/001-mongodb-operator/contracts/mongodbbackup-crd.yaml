@@ -1,0 +1,123 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mongodbbackups.database.vteam.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: database.vteam.io
+  names:
+    kind: MongoDBBackup
+    listKind: MongoDBBackupList
+    plural: mongodbbackups
+    singular: mongodbbackup
+    shortNames:
+      - mdbbkp
+      - mongobkp
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: MongoDBBackup is the Schema for the mongodbbackups API
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: MongoDBBackupSpec defines the desired backup operation
+              required:
+                - instanceRef
+                - destination
+              properties:
+                instanceRef:
+                  type: object
+                  description: Reference to the MongoDBInstance to backup
+                  required:
+                    - name
+                  properties:
+                    name:
+                      type: string
+                      description: Name of MongoDBInstance
+                    namespace:
+                      type: string
+                      description: Namespace of instance (defaults to backup namespace)
+                destination:
+                  type: object
+                  description: Backup storage destination
+                  required:
+                    - type
+                    - bucket
+                    - secretRef
+                  properties:
+                    type:
+                      type: string
+                      description: Backup storage type
+                      enum:
+                        - s3
+                        - gcs
+                        - azure
+                    bucket:
+                      type: string
+                      description: Storage bucket name
+                    path:
+                      type: string
+                      description: Path prefix within bucket
+                    secretRef:
+                      type: string
+                      description: Secret containing storage credentials
+            status:
+              type: object
+              description: MongoDBBackupStatus defines the observed backup state
+              properties:
+                phase:
+                  type: string
+                  description: Backup phase
+                  enum:
+                    - Pending
+                    - InProgress
+                    - Completed
+                    - Failed
+                startTime:
+                  type: string
+                  format: date-time
+                  description: Backup start time
+                completionTime:
+                  type: string
+                  format: date-time
+                  description: Backup completion time
+                size:
+                  type: string
+                  description: Compressed backup size
+                storageLocation:
+                  type: string
+                  description: Full path to backup in storage
+                message:
+                  type: string
+                  description: Human-readable status message
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Instance
+          type: string
+          description: Source instance
+          jsonPath: .spec.instanceRef.name
+        - name: Phase
+          type: string
+          description: Backup phase
+          jsonPath: .status.phase
+        - name: Size
+          type: string
+          description: Backup size
+          jsonPath: .status.size
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp

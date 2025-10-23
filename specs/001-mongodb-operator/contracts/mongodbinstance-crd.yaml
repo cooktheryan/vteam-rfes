@@ -1,0 +1,292 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: mongodbinstances.database.vteam.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: database.vteam.io
+  names:
+    kind: MongoDBInstance
+    listKind: MongoDBInstanceList
+    plural: mongodbinstances
+    singular: mongodbinstance
+    shortNames:
+      - mongodb
+      - mdb
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          description: MongoDBInstance is the Schema for the mongodbinstances API
+          properties:
+            apiVersion:
+              type: string
+              description: 'APIVersion defines the versioned schema of this representation of an object.'
+            kind:
+              type: string
+              description: 'Kind is a string value representing the REST resource this object represents.'
+            metadata:
+              type: object
+            spec:
+              type: object
+              description: MongoDBInstanceSpec defines the desired state of MongoDBInstance
+              required:
+                - version
+                - storage
+                - resources
+              properties:
+                version:
+                  type: string
+                  description: MongoDB version to deploy (e.g., "7.0", "6.0")
+                  enum:
+                    - "6.0"
+                    - "7.0"
+                  example: "7.0"
+                storage:
+                  type: object
+                  description: Storage configuration for MongoDB data
+                  required:
+                    - size
+                  properties:
+                    size:
+                      type: string
+                      description: Persistent volume size (e.g., "10Gi", "100Gi")
+                      pattern: '^(\d+)(\.\d+)?(Gi|Mi|Ti)$'
+                      example: "50Gi"
+                    storageClassName:
+                      type: string
+                      description: Kubernetes StorageClass name (defaults to cluster default if not specified)
+                      example: "gp3"
+                resources:
+                  type: object
+                  description: Compute resource requirements
+                  required:
+                    - requests
+                  properties:
+                    requests:
+                      type: object
+                      description: Minimum resource requirements
+                      required:
+                        - memory
+                        - cpu
+                      properties:
+                        memory:
+                          type: string
+                          description: Memory request (e.g., "2Gi")
+                          pattern: '^(\d+)(\.\d+)?(Gi|Mi)$'
+                          example: "4Gi"
+                        cpu:
+                          type: string
+                          description: CPU request (e.g., "1000m", "1")
+                          pattern: '^(\d+)(m)?$'
+                          example: "2000m"
+                    limits:
+                      type: object
+                      description: Maximum resource limits
+                      properties:
+                        memory:
+                          type: string
+                          description: Memory limit (defaults to 2x requests if not specified)
+                          pattern: '^(\d+)(\.\d+)?(Gi|Mi)$'
+                          example: "8Gi"
+                        cpu:
+                          type: string
+                          description: CPU limit (defaults to 2x requests if not specified)
+                          pattern: '^(\d+)(m)?$'
+                          example: "4000m"
+                backup:
+                  type: object
+                  description: Backup configuration
+                  properties:
+                    enabled:
+                      type: boolean
+                      description: Enable automated backups
+                      default: false
+                    schedule:
+                      type: string
+                      description: Cron schedule for backups (required if enabled=true)
+                      pattern: '^(@(annually|yearly|monthly|weekly|daily|hourly|reboot))|(@every (\d+(ns|us|µs|ms|s|m|h))+)|((((\d+,)+\d+|(\d+(\/|-)\d+)|\d+|\*) ?){5,7})$'
+                      example: "0 2 * * *"
+                    retention:
+                      type: integer
+                      description: Number of backups to retain
+                      default: 7
+                      minimum: 1
+                      maximum: 365
+                    destination:
+                      type: object
+                      description: Backup storage destination (required if enabled=true)
+                      properties:
+                        type:
+                          type: string
+                          description: Backup storage type
+                          enum:
+                            - s3
+                            - gcs
+                            - azure
+                          example: "s3"
+                        bucket:
+                          type: string
+                          description: Storage bucket name
+                          example: "mongodb-backups"
+                        path:
+                          type: string
+                          description: Path prefix within bucket
+                          example: "production/app-mongodb"
+                        secretRef:
+                          type: string
+                          description: Secret containing storage credentials
+                          example: "s3-credentials"
+                network:
+                  type: object
+                  description: Network configuration
+                  properties:
+                    serviceType:
+                      type: string
+                      description: Kubernetes Service type
+                      enum:
+                        - ClusterIP
+                        - NodePort
+                        - LoadBalancer
+                      default: ClusterIP
+                    port:
+                      type: integer
+                      description: MongoDB connection port
+                      default: 27017
+                      minimum: 1024
+                      maximum: 65535
+            status:
+              type: object
+              description: MongoDBInstanceStatus defines the observed state of MongoDBInstance
+              properties:
+                phase:
+                  type: string
+                  description: Current lifecycle phase
+                  enum:
+                    - Pending
+                    - Creating
+                    - Running
+                    - Scaling
+                    - Failed
+                    - Deleting
+                conditions:
+                  type: array
+                  description: Detailed status conditions
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                        description: Condition type
+                        enum:
+                          - Ready
+                          - StorageReady
+                          - NetworkReady
+                      status:
+                        type: string
+                        description: Condition status
+                        enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                        description: Last time the condition transitioned
+                      reason:
+                        type: string
+                        description: Machine-readable reason for condition
+                      message:
+                        type: string
+                        description: Human-readable message
+                health:
+                  type: object
+                  description: Health status information
+                  properties:
+                    status:
+                      type: string
+                      description: Health status
+                      enum:
+                        - Healthy
+                        - Degraded
+                        - Unavailable
+                    lastCheckTime:
+                      type: string
+                      format: date-time
+                      description: Last health check timestamp
+                    message:
+                      type: string
+                      description: Human-readable health status message
+                connection:
+                  type: object
+                  description: Connection information
+                  properties:
+                    hostname:
+                      type: string
+                      description: Connection hostname (Service DNS name)
+                    port:
+                      type: integer
+                      description: Connection port
+                    credentialsSecretRef:
+                      type: string
+                      description: Secret name containing connection credentials
+                resources:
+                  type: object
+                  description: Actual resource usage
+                  properties:
+                    actualStorage:
+                      type: string
+                      description: Current storage allocation
+                    usedStorage:
+                      type: string
+                      description: Storage currently in use
+                backup:
+                  type: object
+                  description: Backup status information
+                  properties:
+                    lastBackupTime:
+                      type: string
+                      format: date-time
+                      description: Timestamp of most recent successful backup
+                    lastBackupStatus:
+                      type: string
+                      description: Status of most recent backup
+                      enum:
+                        - Success
+                        - Failed
+                        - InProgress
+                observedGeneration:
+                  type: integer
+                  format: int64
+                  description: Last observed spec generation
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Version
+          type: string
+          description: MongoDB version
+          jsonPath: .spec.version
+        - name: Phase
+          type: string
+          description: Current phase
+          jsonPath: .status.phase
+        - name: Health
+          type: string
+          description: Health status
+          jsonPath: .status.health.status
+        - name: Storage
+          type: string
+          description: Storage size
+          jsonPath: .spec.storage.size
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
