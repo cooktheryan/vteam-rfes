@@ -1,0 +1,579 @@
+# Deployment Contract: Podman Grafana with Persistent Storage
+
+**Feature**: 001-podman-grafana-pvc
+**Contract Version**: 1.0
+**Date**: 2025-11-06
+
+## Overview
+
+This contract defines the interface between the deployment documentation and the administrator executing the deployment. It specifies inputs, outputs, guarantees, and error conditions.
+
+---
+
+## 1. Deployment Contract
+
+### 1.1 Prerequisites (Input Contract)
+
+The documentation assumes the following prerequisites are met:
+
+```yaml
+prerequisites:
+  operating_system:
+    type: RHEL/CentOS compatible Linux
+    minimum_version: "8.0"
+
+  podman:
+    installed: true
+    minimum_version: "3.0"
+    mode: "rootless or rootful"
+    accessible_commands:
+      - podman --version
+      - podman run
+      - podman ps
+      - podman generate systemd
+
+  selinux:
+    status: "enforcing or permissive"
+    note: "Documentation assumes enforcing mode"
+
+  system_resources:
+    disk_space:
+      minimum: "2GB"
+      location: "Host directory for persistent volume"
+    network:
+      port_availability: 3000
+      note: "Configurable if port 3000 is in use"
+
+  user_permissions:
+    create_directories: true
+    run_containers: true
+    manage_systemd_user_services: true
+    enable_lingering: true
+```
+
+**Validation Commands**:
+```bash
+# Verify Podman
+podman --version
+
+# Check SELinux status
+getenforce
+
+# Check port availability
+ss -tuln | grep :3000
+
+# Check disk space
+df -h ~
+
+# Verify systemd user service capability
+systemctl --user status
+```
+
+### 1.2 Input Parameters
+
+```yaml
+deployment_parameters:
+  required:
+    host_directory:
+      description: "Absolute path for persistent volume on host"
+      type: string
+      example: "~/grafana-data"
+      validation: "Must be absolute path, parent must exist"
+
+  optional:
+    container_name:
+      description: "Name for Grafana container"
+      type: string
+      default: "grafana"
+      validation: "Must be unique on host"
+
+    host_port:
+      description: "Host port to expose Grafana web interface"
+      type: integer
+      default: 3000
+      validation: "Must be available (not in use)"
+      range: "1024-65535"
+
+    grafana_image:
+      description: "Grafana container image reference"
+      type: string
+      default: "grafana/grafana:latest"
+      validation: "Must be pullable from registry"
+
+    enable_systemd:
+      description: "Whether to configure systemd auto-start"
+      type: boolean
+      default: true
+```
+
+### 1.3 Output Guarantees
+
+Upon successful deployment, the documentation guarantees:
+
+```yaml
+guarantees:
+  grafana_container:
+    status: "running"
+    accessibility:
+      url: "http://localhost:{host_port}"
+      response_time: "< 60 seconds from deployment"
+      default_credentials: "admin/admin"
+
+  data_persistence:
+    scope: "100% of configuration data"
+    includes:
+      - "Dashboards"
+      - "Data sources"
+      - "Users and permissions"
+      - "Alert rules"
+      - "Plugin data"
+      - "Settings"
+    survives:
+      - "Container stop"
+      - "Container removal"
+      - "Container recreation"
+      - "System reboot (with systemd service)"
+
+  systemd_service:
+    enabled: true  # if enable_systemd = true
+    auto_start: true
+    restart_policy: "on-failure"
+    logging: "Available via journalctl --user -u container-grafana"
+
+  performance:
+    container_start_time: "< 30 seconds"
+    grafana_ready_time: "< 60 seconds"
+    data_recovery_time: "< 30 seconds after container restart"
+```
+
+### 1.4 Success Criteria Verification
+
+```yaml
+verification_steps:
+  step_1_container_running:
+    command: "podman ps --filter name=grafana"
+    expected_output: "Container with STATUS = Up"
+
+  step_2_web_interface_accessible:
+    command: "curl -s -o /dev/null -w '%{http_code}' http://localhost:3000"
+    expected_output: "200 or 302"
+
+  step_3_data_persistence:
+    procedure:
+      - "Create custom dashboard in Grafana web UI"
+      - "podman stop grafana"
+      - "podman rm grafana"
+      - "Re-run deployment command with same host directory"
+      - "Access Grafana web UI"
+      - "Verify custom dashboard still exists"
+    expected_result: "Dashboard persists"
+
+  step_4_systemd_service:
+    command: "systemctl --user status container-grafana"
+    expected_output: "Active: active (running)"
+
+  step_5_boot_persistence:
+    procedure:
+      - "sudo reboot"
+      - "After boot, check: systemctl --user status container-grafana"
+    expected_result: "Service running without manual start"
+```
+
+---
+
+## 2. Command Interface Contract
+
+### 2.1 Core Deployment Command
+
+```yaml
+command: podman_run
+syntax: |
+  podman run -d \
+    --name <container_name> \
+    -v <host_directory>:/var/lib/grafana:Z \
+    -p <host_port>:3000 \
+    <grafana_image>
+
+parameters:
+  -d:
+    description: "Run container in detached mode"
+    required: true
+
+  --name:
+    description: "Assign name to container"
+    required: false
+    default: "Auto-generated by Podman"
+
+  -v:
+    description: "Mount volume"
+    format: "<host_path>:/var/lib/grafana:Z"
+    required: true
+    selinux_flag: ":Z"
+    selinux_flag_required: true
+    note: ":Z sets private unshared SELinux label"
+
+  -p:
+    description: "Publish port"
+    format: "<host_port>:3000"
+    required: true
+    container_port: 3000
+    note: "Container port 3000 is Grafana default"
+
+  image:
+    description: "Grafana container image"
+    required: true
+    default: "grafana/grafana:latest"
+
+returns:
+  success:
+    exit_code: 0
+    stdout: "Container ID (64-character hash)"
+
+  failure:
+    exit_code: "!= 0"
+    stderr: "Error message"
+    common_errors:
+      - "Port already in use"
+      - "Image not found"
+      - "Permission denied (SELinux)"
+      - "Volume mount failed"
+```
+
+### 2.2 Systemd Service Generation Command
+
+```yaml
+command: podman_generate_systemd
+syntax: "podman generate systemd --name <container_name> --files --new"
+
+parameters:
+  --name:
+    description: "Container name to generate service for"
+    required: true
+
+  --files:
+    description: "Write service file to current directory"
+    required: true
+
+  --new:
+    description: "Create container from scratch on service start"
+    required: true
+    note: "Enables clean updates and removes"
+
+returns:
+  success:
+    exit_code: 0
+    stdout: "Service file path"
+    file_created: "container-<container_name>.service"
+
+  failure:
+    exit_code: "!= 0"
+    stderr: "Error message"
+    common_errors:
+      - "Container not found"
+      - "Permission denied"
+```
+
+### 2.3 Service Installation Commands
+
+```yaml
+command_sequence:
+  step_1_create_directory:
+    command: "mkdir -p ~/.config/systemd/user/"
+    description: "Ensure systemd user directory exists"
+
+  step_2_move_service_file:
+    command: "mv container-grafana.service ~/.config/systemd/user/"
+    description: "Install service file"
+
+  step_3_reload_daemon:
+    command: "systemctl --user daemon-reload"
+    description: "Reload systemd to recognize new service"
+
+  step_4_enable_service:
+    command: "systemctl --user enable container-grafana.service"
+    description: "Enable auto-start on boot"
+
+  step_5_start_service:
+    command: "systemctl --user start container-grafana.service"
+    description: "Start service immediately"
+
+  step_6_enable_lingering:
+    command: "loginctl enable-linger $USER"
+    description: "Allow user services to run without login"
+    required_for_boot_persistence: true
+```
+
+---
+
+## 3. Error Contract
+
+### 3.1 Common Error Conditions
+
+```yaml
+error_conditions:
+  selinux_permission_denied:
+    symptom: "Permission denied writing to /var/lib/grafana"
+    cause: "Missing :Z flag on volume mount"
+    solution: "Add :Z to volume mount: -v ~/grafana-data:/var/lib/grafana:Z"
+    error_message_pattern: "permission denied|SELinux"
+
+  port_already_in_use:
+    symptom: "Error starting container - bind: address already in use"
+    cause: "Another process using port 3000"
+    solution: "Change host port: -p 3001:3000"
+    verification: "ss -tuln | grep :3000"
+
+  image_pull_failure:
+    symptom: "Error: unable to pull image"
+    cause: "Network issue or invalid image reference"
+    solution: "Check network connectivity, verify image name"
+    verification: "podman pull grafana/grafana"
+
+  systemd_service_not_starting:
+    symptom: "systemctl --user start fails"
+    cause: "Service file misconfigured or lingering not enabled"
+    solution: "Verify service file, run loginctl enable-linger"
+    verification: "systemctl --user status container-grafana"
+
+  container_exits_immediately:
+    symptom: "Container starts but exits with status code 1"
+    cause: "Grafana cannot write to /var/lib/grafana (permissions)"
+    solution: "Verify SELinux flag :Z is present"
+    verification: "podman logs grafana"
+
+  boot_persistence_failure:
+    symptom: "Container not running after reboot"
+    cause: "User lingering not enabled"
+    solution: "loginctl enable-linger $USER"
+    verification: "loginctl show-user $USER | grep Linger"
+```
+
+### 3.2 Error Response Format
+
+```yaml
+error_response:
+  structure:
+    error_code: "Error identifier"
+    error_message: "Human-readable description"
+    troubleshooting_steps:
+      - "Step 1: Diagnostic command"
+      - "Step 2: Corrective action"
+      - "Step 3: Verification"
+
+  example:
+    error_code: "SELINUX_PERMISSION_DENIED"
+    error_message: "Container cannot write to persistent volume due to SELinux policy"
+    troubleshooting_steps:
+      - "Check SELinux status: getenforce"
+      - "Verify volume mount includes :Z flag"
+      - "Re-run deployment with correct flag: -v ~/grafana-data:/var/lib/grafana:Z"
+      - "Verify with: podman logs grafana"
+```
+
+---
+
+## 4. Data Persistence Contract
+
+### 4.1 Persistence Scope
+
+```yaml
+persisted_data:
+  included:
+    dashboards:
+      location: "/var/lib/grafana/grafana.db (SQLite)"
+      format: "JSON definitions in database"
+
+    data_sources:
+      location: "/var/lib/grafana/grafana.db"
+      includes: "Connection strings, credentials"
+
+    users:
+      location: "/var/lib/grafana/grafana.db"
+      includes: "Accounts, passwords, roles, permissions"
+
+    plugins:
+      location: "/var/lib/grafana/plugins/"
+      includes: "Installed plugin files and data"
+
+    configurations:
+      location: "/var/lib/grafana/grafana.db"
+      includes: "All Grafana settings"
+
+    sessions:
+      location: "/var/lib/grafana/sessions/"
+      includes: "Active user sessions"
+
+  not_included:
+    ephemeral_logs:
+      note: "Container logs stored separately in Podman"
+      access: "podman logs <container_name>"
+
+    metrics_data:
+      note: "If using external data sources (Prometheus, etc.)"
+      persistence: "Managed by external systems"
+```
+
+### 4.2 Lifecycle Guarantees
+
+```yaml
+lifecycle_guarantees:
+  container_stop:
+    data_affected: "None"
+    persistence: "100%"
+    note: "All data flushed to persistent volume"
+
+  container_remove:
+    data_affected: "None"
+    persistence: "100%"
+    note: "Container deleted, volume data intact"
+
+  container_recreate:
+    data_affected: "None"
+    persistence: "100%"
+    recovery_time: "< 30 seconds"
+    note: "New container reads existing volume data"
+
+  system_reboot:
+    data_affected: "None"
+    persistence: "100%"
+    auto_start: "Yes (if systemd service enabled)"
+
+  grafana_version_upgrade:
+    data_affected: "Possible schema migration"
+    persistence: "100%"
+    note: "Grafana handles database migrations automatically"
+    recommendation: "Backup volume before major version upgrades"
+```
+
+---
+
+## 5. Performance Contract
+
+```yaml
+performance_guarantees:
+  deployment_time:
+    total: "< 10 minutes"
+    breakdown:
+      prerequisites_validation: "1-2 minutes"
+      image_pull: "1-3 minutes (depends on network)"
+      container_start: "< 30 seconds"
+      grafana_initialization: "< 30 seconds"
+      systemd_configuration: "1-2 minutes"
+      verification: "1-2 minutes"
+
+  runtime_performance:
+    container_startup: "< 30 seconds"
+    grafana_ready: "< 60 seconds from container start"
+    web_ui_response: "< 2 seconds for dashboard load"
+
+  resource_usage:
+    minimum_disk_space: "2GB for persistent volume"
+    grafana_memory_usage: "~100-200MB typical"
+    cpu_usage: "Low (< 5% on modern systems)"
+```
+
+---
+
+## 6. Security Contract
+
+```yaml
+security_guarantees:
+  container_isolation:
+    rootless_mode: "Supported"
+    user_namespace: "Container runs as UID 472, mapped to host UID"
+    selinux_isolation: "Private unshared label (:Z)"
+
+  credential_management:
+    default_credentials:
+      username: "admin"
+      password: "admin"
+      note: "Must be changed on first login"
+    credential_storage: "Encrypted in SQLite database"
+
+  network_security:
+    exposure: "Port 3000 exposed to localhost by default"
+    recommendation: "Use reverse proxy (nginx, Apache) for HTTPS in production"
+
+  data_security:
+    at_rest: "Volume data stored on host filesystem"
+    access_control: "SELinux private unshared label prevents other containers from accessing"
+    backup_responsibility: "Administrator must implement backup procedures"
+```
+
+---
+
+## 7. Maintenance Contract
+
+```yaml
+maintenance_operations:
+  update_grafana:
+    procedure:
+      - "Pull new image: podman pull grafana/grafana:latest"
+      - "Stop service: systemctl --user stop container-grafana"
+      - "Service auto-creates new container with new image"
+      - "Data automatically migrated if needed"
+    data_safety: "100% persistent"
+
+  backup_volume:
+    procedure:
+      - "Stop container: systemctl --user stop container-grafana"
+      - "Backup directory: tar -czf grafana-backup.tar.gz ~/grafana-data"
+      - "Start container: systemctl --user start container-grafana"
+    recommendation: "Regular backups before upgrades"
+
+  restore_volume:
+    procedure:
+      - "Stop container: systemctl --user stop container-grafana"
+      - "Remove old data: rm -rf ~/grafana-data/*"
+      - "Extract backup: tar -xzf grafana-backup.tar.gz -C ~/"
+      - "Start container: systemctl --user start container-grafana"
+
+  view_logs:
+    podman_logs: "podman logs grafana"
+    systemd_logs: "journalctl --user -u container-grafana"
+    grafana_logs: "Available in Grafana UI under Configuration > Server"
+```
+
+---
+
+## 8. Contract Compliance
+
+### 8.1 Documentation Requirements
+
+The documentation MUST provide:
+- [ ] Complete shell commands for each operation
+- [ ] Prerequisite validation procedures
+- [ ] Step-by-step deployment instructions
+- [ ] Verification commands for each step
+- [ ] Troubleshooting section with error patterns and solutions
+- [ ] Data persistence validation procedure
+- [ ] Systemd service configuration instructions
+- [ ] Maintenance and backup procedures
+
+### 8.2 Testing Requirements
+
+The documentation MUST be validated against:
+- [ ] Fresh RHEL/CentOS system deployment
+- [ ] SELinux enforcing mode
+- [ ] Rootless Podman configuration
+- [ ] Container stop/start persistence test
+- [ ] Container remove/recreate persistence test
+- [ ] System reboot persistence test (with systemd)
+- [ ] Port conflict error handling
+- [ ] SELinux permission error handling
+
+---
+
+## Version History
+
+| Version | Date       | Changes                          |
+|---------|------------|----------------------------------|
+| 1.0     | 2025-11-06 | Initial deployment contract      |
+
+---
+
+## Contract Signoff
+
+**Validated By**: AI Agent (Spec-Kit Plan Phase)
+**Status**: Ready for Implementation
+**Next Phase**: Generate quickstart.md and task breakdown
