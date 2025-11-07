@@ -1,0 +1,627 @@
+openapi: 3.0.3
+info:
+  title: vLLM OpenAI-Compatible API
+  description: |
+    OpenAI-compatible REST API provided by the vLLM inference server running in the UBI container.
+    This API enables text generation and chat completions using loaded language models.
+
+    **Container**: ubi-vllm:latest
+    **vLLM Version**: 0.6.6
+    **Default Port**: 8000
+    **Authentication**: Optional API key via `Authorization: Bearer <token>` header
+  version: 0.6.6
+  contact:
+    name: vLLM Project
+    url: https://docs.vllm.ai/
+
+servers:
+  - url: http://localhost:8000
+    description: Local container deployment (default)
+  - url: http://{host}:{port}
+    description: Customizable deployment
+    variables:
+      host:
+        default: localhost
+        description: Container host address
+      port:
+        default: '8000'
+        description: Container port mapping
+
+tags:
+  - name: health
+    description: Health and readiness checks
+  - name: models
+    description: Model information
+  - name: completions
+    description: Text completion endpoints
+  - name: chat
+    description: Chat completion endpoints
+
+paths:
+  /health:
+    get:
+      tags:
+        - health
+      summary: Health Check
+      description: Returns service health status. Used for container readiness and liveness probes.
+      operationId: getHealth
+      responses:
+        '200':
+          description: Service is healthy and ready to accept requests
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: "OK"
+        '503':
+          description: Service is unhealthy or not ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/models:
+    get:
+      tags:
+        - models
+      summary: List Available Models
+      description: Returns list of models currently loaded in the vLLM server
+      operationId: listModels
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of available models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelList'
+        '401':
+          description: Unauthorized (if API key required)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/completions:
+    post:
+      tags:
+        - completions
+      summary: Create Text Completion
+      description: |
+        Generates a text completion for the provided prompt using the specified model.
+        Compatible with OpenAI's `/v1/completions` endpoint.
+      operationId: createCompletion
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompletionRequest'
+            examples:
+              simple:
+                summary: Simple completion
+                value:
+                  model: "meta-llama/Llama-2-7b-hf"
+                  prompt: "The capital of France is"
+                  max_tokens: 10
+              with_params:
+                summary: Completion with parameters
+                value:
+                  model: "meta-llama/Llama-2-7b-hf"
+                  prompt: "Write a haiku about containers:\n"
+                  max_tokens: 50
+                  temperature: 0.7
+                  top_p: 0.9
+                  n: 1
+      responses:
+        '200':
+          description: Successful completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompletionResponse'
+        '400':
+          description: Bad request (invalid parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (invalid or missing API key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: Service unavailable (model not loaded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /v1/chat/completions:
+    post:
+      tags:
+        - chat
+      summary: Create Chat Completion
+      description: |
+        Generates a chat completion for the provided conversation using the specified model.
+        Compatible with OpenAI's `/v1/chat/completions` endpoint.
+      operationId: createChatCompletion
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChatCompletionRequest'
+            examples:
+              simple_chat:
+                summary: Simple chat interaction
+                value:
+                  model: "meta-llama/Llama-2-7b-chat-hf"
+                  messages:
+                    - role: "user"
+                      content: "What is containerization?"
+              multi_turn:
+                summary: Multi-turn conversation
+                value:
+                  model: "meta-llama/Llama-2-7b-chat-hf"
+                  messages:
+                    - role: "system"
+                      content: "You are a helpful assistant."
+                    - role: "user"
+                      content: "What is vLLM?"
+                    - role: "assistant"
+                      content: "vLLM is a fast inference engine for large language models."
+                    - role: "user"
+                      content: "How do I deploy it?"
+                  max_tokens: 100
+                  temperature: 0.7
+      responses:
+        '200':
+          description: Successful chat completion
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChatCompletionResponse'
+        '400':
+          description: Bad request (invalid parameters)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized (invalid or missing API key)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /metrics:
+    get:
+      tags:
+        - health
+      summary: Prometheus Metrics
+      description: Returns Prometheus-compatible metrics for monitoring and observability
+      operationId: getMetrics
+      responses:
+        '200':
+          description: Prometheus metrics in text format
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: |
+                  # HELP vllm_requests_total Total number of requests
+                  # TYPE vllm_requests_total counter
+                  vllm_requests_total 42
+                  # HELP vllm_gpu_cache_usage_perc GPU cache usage percentage
+                  # TYPE vllm_gpu_cache_usage_perc gauge
+                  vllm_gpu_cache_usage_perc 0.75
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        API key authentication. Configured via `--api-key` flag when starting vLLM server.
+        Required if the container was started with API key protection enabled.
+
+  schemas:
+    ModelList:
+      type: object
+      required:
+        - object
+        - data
+      properties:
+        object:
+          type: string
+          enum: [list]
+          example: "list"
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Model'
+
+    Model:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - owned_by
+      properties:
+        id:
+          type: string
+          description: Model identifier (HuggingFace model name or path)
+          example: "meta-llama/Llama-2-7b-hf"
+        object:
+          type: string
+          enum: [model]
+          example: "model"
+        created:
+          type: integer
+          description: Unix timestamp of model creation
+          example: 1699000000
+        owned_by:
+          type: string
+          description: Model owner/organization
+          example: "meta-llama"
+        root:
+          type: string
+          description: Root model identifier
+          example: "meta-llama/Llama-2-7b-hf"
+        parent:
+          type: string
+          nullable: true
+          description: Parent model if fine-tuned
+          example: null
+
+    CompletionRequest:
+      type: object
+      required:
+        - model
+        - prompt
+      properties:
+        model:
+          type: string
+          description: Model identifier to use for completion
+          example: "meta-llama/Llama-2-7b-hf"
+        prompt:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Input prompt(s) for completion
+          example: "Once upon a time"
+        max_tokens:
+          type: integer
+          description: Maximum number of tokens to generate
+          default: 16
+          minimum: 1
+          example: 100
+        temperature:
+          type: number
+          format: float
+          description: Sampling temperature (0.0 = deterministic, higher = more random)
+          default: 1.0
+          minimum: 0.0
+          maximum: 2.0
+          example: 0.7
+        top_p:
+          type: number
+          format: float
+          description: Nucleus sampling threshold
+          default: 1.0
+          minimum: 0.0
+          maximum: 1.0
+          example: 0.9
+        n:
+          type: integer
+          description: Number of completions to generate
+          default: 1
+          minimum: 1
+          example: 1
+        stream:
+          type: boolean
+          description: Whether to stream partial results
+          default: false
+        logprobs:
+          type: integer
+          nullable: true
+          description: Include log probabilities for top N tokens
+          minimum: 0
+          maximum: 5
+          example: null
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Stop sequence(s) to end generation
+          example: ["\n", "###"]
+        presence_penalty:
+          type: number
+          format: float
+          description: Penalty for token presence (-2.0 to 2.0)
+          default: 0.0
+          minimum: -2.0
+          maximum: 2.0
+        frequency_penalty:
+          type: number
+          format: float
+          description: Penalty for token frequency (-2.0 to 2.0)
+          default: 0.0
+          minimum: -2.0
+          maximum: 2.0
+        best_of:
+          type: integer
+          nullable: true
+          description: Generate N completions and return the best
+          minimum: 1
+          example: null
+        use_beam_search:
+          type: boolean
+          description: Whether to use beam search instead of sampling
+          default: false
+
+    CompletionResponse:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+          description: Unique completion identifier
+          example: "cmpl-abc123"
+        object:
+          type: string
+          enum: [text_completion]
+          example: "text_completion"
+        created:
+          type: integer
+          description: Unix timestamp of completion creation
+          example: 1699000000
+        model:
+          type: string
+          description: Model used for completion
+          example: "meta-llama/Llama-2-7b-hf"
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/CompletionChoice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    CompletionChoice:
+      type: object
+      required:
+        - text
+        - index
+        - finish_reason
+      properties:
+        text:
+          type: string
+          description: Generated text completion
+          example: " Paris. The city of lights is known for its"
+        index:
+          type: integer
+          description: Choice index (for n > 1)
+          example: 0
+        logprobs:
+          type: object
+          nullable: true
+          description: Log probabilities (if requested)
+          properties:
+            tokens:
+              type: array
+              items:
+                type: string
+            token_logprobs:
+              type: array
+              items:
+                type: number
+            top_logprobs:
+              type: array
+              items:
+                type: object
+        finish_reason:
+          type: string
+          enum: [stop, length, content_filter]
+          description: Reason generation ended
+          example: "length"
+
+    ChatCompletionRequest:
+      type: object
+      required:
+        - model
+        - messages
+      properties:
+        model:
+          type: string
+          description: Model identifier to use for chat completion
+          example: "meta-llama/Llama-2-7b-chat-hf"
+        messages:
+          type: array
+          description: Conversation messages
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/ChatMessage'
+        max_tokens:
+          type: integer
+          description: Maximum tokens to generate
+          minimum: 1
+          example: 100
+        temperature:
+          type: number
+          format: float
+          description: Sampling temperature
+          default: 1.0
+          minimum: 0.0
+          maximum: 2.0
+        top_p:
+          type: number
+          format: float
+          description: Nucleus sampling threshold
+          default: 1.0
+          minimum: 0.0
+          maximum: 1.0
+        n:
+          type: integer
+          description: Number of chat completions to generate
+          default: 1
+          minimum: 1
+        stream:
+          type: boolean
+          description: Whether to stream partial results
+          default: false
+        stop:
+          oneOf:
+            - type: string
+            - type: array
+              items:
+                type: string
+          description: Stop sequence(s)
+        presence_penalty:
+          type: number
+          format: float
+          default: 0.0
+          minimum: -2.0
+          maximum: 2.0
+        frequency_penalty:
+          type: number
+          format: float
+          default: 0.0
+          minimum: -2.0
+          maximum: 2.0
+
+    ChatMessage:
+      type: object
+      required:
+        - role
+        - content
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+          description: Message role in conversation
+          example: "user"
+        content:
+          type: string
+          description: Message content
+          example: "What is the capital of France?"
+        name:
+          type: string
+          description: Optional name of message author
+          example: "user1"
+
+    ChatCompletionResponse:
+      type: object
+      required:
+        - id
+        - object
+        - created
+        - model
+        - choices
+      properties:
+        id:
+          type: string
+          description: Unique chat completion identifier
+          example: "chatcmpl-xyz789"
+        object:
+          type: string
+          enum: [chat.completion]
+          example: "chat.completion"
+        created:
+          type: integer
+          description: Unix timestamp
+          example: 1699000000
+        model:
+          type: string
+          description: Model used
+          example: "meta-llama/Llama-2-7b-chat-hf"
+        choices:
+          type: array
+          items:
+            $ref: '#/components/schemas/ChatCompletionChoice'
+        usage:
+          $ref: '#/components/schemas/Usage'
+
+    ChatCompletionChoice:
+      type: object
+      required:
+        - index
+        - message
+        - finish_reason
+      properties:
+        index:
+          type: integer
+          example: 0
+        message:
+          $ref: '#/components/schemas/ChatMessage'
+        finish_reason:
+          type: string
+          enum: [stop, length, content_filter]
+          example: "stop"
+
+    Usage:
+      type: object
+      required:
+        - prompt_tokens
+        - completion_tokens
+        - total_tokens
+      properties:
+        prompt_tokens:
+          type: integer
+          description: Number of tokens in the prompt
+          example: 15
+        completion_tokens:
+          type: integer
+          description: Number of tokens in the completion
+          example: 25
+        total_tokens:
+          type: integer
+          description: Total tokens used
+          example: 40
+
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - message
+            - type
+          properties:
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid model specified"
+            type:
+              type: string
+              description: Error type category
+              example: "invalid_request_error"
+            param:
+              type: string
+              nullable: true
+              description: Parameter that caused the error
+              example: "model"
+            code:
+              type: string
+              nullable: true
+              description: Error code
+              example: "model_not_found"
